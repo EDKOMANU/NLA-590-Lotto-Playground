@@ -17,6 +17,41 @@ import training_control
 
 st.set_page_config(page_title="Ghana NLA 5/90 Predictor", layout="wide")
 
+# Custom CSS for enhanced mobile responsiveness
+st.markdown("""
+<style>
+@media (max-width: 768px) {
+    /* Allow metric values and labels to wrap cleanly on mobile screens */
+    [data-testid="stMetricValue"] {
+        font-size: 1.1rem !important;
+        word-break: break-word !important;
+        white-space: normal !important;
+        line-height: 1.3 !important;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 0.85rem !important;
+    }
+    /* Enable column wrapping on mobile narrow viewports */
+    [data-testid="column"] {
+        min-width: 130px !important;
+        flex: 1 1 130px !important;
+        margin-bottom: 0.5rem !important;
+    }
+    /* Ensure dataframes scroll horizontally on mobile without overflowing page */
+    [data-testid="stDataFrame"] {
+        width: 100% !important;
+        overflow-x: auto !important;
+    }
+    /* Compact padding for small mobile displays */
+    .block-container {
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+        padding-top: 1rem !important;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
 HONESTY_LINE = (
     "5/90 lottery draws are independent, uniform-random events. No strategy in this "
     "app -- including the pattern analysis and the machine-learning/deep-learning "
@@ -80,7 +115,7 @@ def fig_bar_scores(scores, top_n=15, title=""):
     vals = [v for _, v in ranked]
     fig = go.Figure(go.Bar(x=nums, y=vals, marker_color="#4C78A8"))
     fig.update_layout(title=title, xaxis_title="number", yaxis_title="score",
-                       margin=dict(l=10, r=10, t=40, b=10), height=350)
+                       margin=dict(l=10, r=10, t=40, b=10), height=350, autosize=True)
     return fig
 
 
@@ -101,7 +136,7 @@ def fig_hitrate_comparison(results, k, per_game=None):
     fig.add_trace(go.Scatter(name='random chance', x=modes, y=random_ge1, mode='lines+markers',
                               line=dict(color="#E45756", dash='dash')))
     fig.update_layout(title=f"P(>=1 hit) for {k} picks, with 95% CI", yaxis_title="%",
-                       margin=dict(l=10, r=10, t=40, b=10), height=400)
+                       margin=dict(l=10, r=10, t=40, b=10), height=400, autosize=True)
     return fig
 
 
@@ -116,7 +151,7 @@ def fig_auc_brier(results, per_game=None):
     fig.add_trace(go.Bar(name='ROC-AUC (chance = 0.5)', x=modes, y=aucs, marker_color="#72B7B2"))
     fig.add_hline(y=0.5, line_dash="dash", line_color="#E45756")
     fig.update_layout(title="ROC-AUC by strategy", yaxis_title="AUC",
-                       margin=dict(l=10, r=10, t=40, b=10), height=350)
+                       margin=dict(l=10, r=10, t=40, b=10), height=350, autosize=True)
     return fig
 
 
@@ -239,7 +274,7 @@ def _picks_header(game, upto, sc, mode):
     picks10 = [n for n, _ in ranked[:10]]
     next_draw_date = upto if upto else next_date_for(game, dt.date.today())
     st.subheader(f"{config.NAMES[game]} -- draw of {next_draw_date}")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns([1, 1, 1.2, 1.2])
     c1.metric("2-sure", " · ".join(map(str, picks10[:2])))
     c2.metric("3-direct", " · ".join(map(str, picks10[:3])))
     c3.metric("5 picks", " · ".join(map(str, picks10[:5])))
