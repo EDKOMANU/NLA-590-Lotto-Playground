@@ -1,0 +1,8 @@
+﻿
+MS: best plan under the reduced search = image|chart_bonanza|lag1 (weight 7.73%)
+  P(pure noise hands back a better best-plan) = 0.05 over 40 synthetic charts
+  VERDICT: the best plan beats what this size of search finds in pure noise
+
+NW: best plan under the reduced search = image|chart_partner|lag1 (weight 6.24%)
+  P(pure noise hands back a better best-plan) = 0.53 over 40 synthetic charts
+  VERDICT: indistinguishable from noise — treat every plan below as a reading, not a finding

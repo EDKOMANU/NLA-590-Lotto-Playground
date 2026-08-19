@@ -1,0 +1,12 @@
+Loaded 2702 draws across 7 games (fingerprint 4160cb6855ff2518, quick=True, games=['FT', 'FB'])
+Training scikit-learn ensemble (rf/gbm/mlp) per game...
+  [rf_FT] trained in 5.0s -> artifacts/rf_FT.pkl
+  [gbm_FT] trained in 3.4s -> artifacts/gbm_FT.pkl
+  [mlp_FT] trained in 1.5s -> artifacts/mlp_FT.pkl
+  [rf_FB] trained in 1.3s -> artifacts/rf_FB.pkl
+  [gbm_FB] trained in 1.3s -> artifacts/gbm_FB.pkl
+  [mlp_FB] trained in 1.6s -> artifacts/mlp_FB.pkl
+Training deep LSTM model per game...
+  [deep_FT] trained in 5.3s (val BCE 1.3029, 9 epochs) -> artifacts/deep_FT.pt
+  [deep_FB] trained in 0.5s (val BCE 1.3015, 10 epochs) -> artifacts/deep_FB.pt
+train.py done.

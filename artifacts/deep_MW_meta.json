@@ -1,0 +1,11 @@
+{
+  "window": 20,
+  "hidden": 64,
+  "best_val_bce": 1.3115838766098022,
+  "epochs_run": 6,
+  "data_fingerprint": "aa35d231bf881865",
+  "game_fingerprint": "c1b66180277fef23",
+  "trained_at": "2026-07-19T02:21:05.609726",
+  "quick": true,
+  "game": "MW"
+}
