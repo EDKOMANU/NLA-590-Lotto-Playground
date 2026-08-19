@@ -1,0 +1,26 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.log
+streamlit.log
+bt_stats.log
+
+# Temporary / raw backup text files
+raw_part*.txt
+*.pre_repair_backup.csv
+*.pre_update_backup.csv
+backtest_*.txt
+spatial_backtest*.txt
+pattern_backtest*.txt
+keys_MS_validation.txt
+charts_comparison_backtest.txt
+plan_bootstrap.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
