@@ -1,0 +1,4 @@
+# Scratch/exploration scripts only (explore_api.py's socket.io probe of the results
+# feed). Nothing in the app or in training imports these.
+-r requirements-train.txt
+python-socketio>=5.10,<6.0

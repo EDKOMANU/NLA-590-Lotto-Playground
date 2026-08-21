@@ -24,3 +24,20 @@ plan_bootstrap.txt
 .venv/
 venv/
 ENV/
+
+# Source datasets kept for provenance -- the app only ever reads ghana_lotto_history.csv
+kaigee_history.csv
+ghana_hybrid_scraped.csv
+
+# Torch checkpoints. The served app reads artifacts/deep_*.npz (NumPy) instead; the
+# .pt files matter only when resuming training, which the runtime image can't do.
+artifacts/*.pt
+
+# Local Streamlit disk cache -- rebuilt at runtime, must not be baked into the image
+.streamlit/cache/
+.cache/
+
+# Docs and scratch
+REPORT.md
+DEPLOYMENT.md
+.devcontainer/

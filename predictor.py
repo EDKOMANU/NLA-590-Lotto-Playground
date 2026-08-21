@@ -65,7 +65,7 @@ def get_scores_any(history, mode, game_code, all_draws=None):
             return {k: 0.0 for k in range(1, 91)}
         return sklearn_models.sklearn_scores(mode, model, history, game_code)
     if mode == 'deep':
-        state_dict, meta = artifacts.load_torch_model(f'deep_{game_code}')
+        state_dict, meta = artifacts.load_deep_weights(f'deep_{game_code}')
         if state_dict is None:
             print(f"  [deep_{game_code}] no trained artifact found -- run `python train.py` first.")
             return {k: 0.0 for k in range(1, 91)}
@@ -76,7 +76,7 @@ def get_scores_any(history, mode, game_code, all_draws=None):
             model = artifacts.load_sklearn_model(f'{name}_{game_code}')
             if model is not None:
                 comp[name] = sklearn_models.sklearn_scores(name, model, history, game_code)
-        state_dict, meta = artifacts.load_torch_model(f'deep_{game_code}')
+        state_dict, meta = artifacts.load_deep_weights(f'deep_{game_code}')
         if state_dict is not None:
             comp['deep'] = deep_model.deep_scores(state_dict, meta, history, game_code)
         return ens_mod.blend_scores(comp)

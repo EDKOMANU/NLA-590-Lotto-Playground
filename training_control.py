@@ -38,7 +38,15 @@ def is_stale(s):
         return False
 
 
-def start(quick=False, games=None, skip_backtest=False):
+def deep_training_available():
+    """Whether this environment can fit the LSTM. Scoring it never needs torch (the
+    app runs it in NumPy); fitting does, and the runtime requirements leave torch out
+    so deployments stay small -- so the sidebar says so rather than failing a run."""
+    from lottery_core import deep_model
+    return deep_model.torch_available()
+
+
+def start(quick=False, games=None, skip_backtest=False, skip_deep=False):
     global _popen
     if is_running():
         return False
@@ -48,6 +56,8 @@ def start(quick=False, games=None, skip_backtest=False):
         cmd += ['--games'] + list(games)
     if skip_backtest:
         cmd += ['--skip-backtest']
+    if skip_deep:
+        cmd += ['--skip-deep']
     _popen = subprocess.Popen(cmd, cwd=BASE, stdout=log_f, stderr=subprocess.STDOUT)
     return True
 

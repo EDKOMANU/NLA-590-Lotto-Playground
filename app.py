@@ -66,6 +66,69 @@ def data_latest_date():
     return artifacts.data_latest_date()
 
 
+# ---------------------------------------------------------------- memoized analysis
+# Streamlit re-runs this whole script on every widget interaction, and st.tabs renders
+# *every* tab each time -- so without memoization each click re-paid the full cost of
+# the pattern scoring (~3s), the per-pick explanations (~1s) and the chart-relationship
+# analyses (~1.4s), whether or not the user was looking at that tab.
+#
+# Everything below is keyed on a hash of the CSV's contents (plus, for the trained
+# modes, when that game's artifacts were last written), so a data refresh or a retrain
+# invalidates exactly what it should and nothing else. That correctness is what lets
+# these persist to disk: on a host whose disk survives a restart, a woken-up container
+# serves its first request from a warm cache instead of recomputing everything.
+@st.cache_data(ttl=300)
+def data_fp():
+    return artifacts.data_content_fingerprint()
+
+
+@st.cache_data(ttl=60)
+def artifact_version(game):
+    """When this game's models were last written -- part of the cache key for the
+    trained modes so a finished retrain shows up without a manual cache clear."""
+    meta = artifacts.game_artifact_meta(game, 'rf')
+    return meta.get('trained_at', '') if meta else ''
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def scores_for(fp, art_ver, game, mode, upto):
+    draws = load_draws()
+    seq = [d for d in draws if d['code'] == game and (upto is None or d['date'] < upto)]
+    all_seq = [d for d in draws if upto is None or d['date'] < upto]
+    return get_scores_any(seq, mode, game, all_draws=all_seq)
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def explain_for(fp, game, upto, num):
+    draws = load_draws()
+    seq = [d for d in draws if d['code'] == game and (upto is None or d['date'] < upto)]
+    all_seq = [d for d in draws if upto is None or d['date'] < upto]
+    return pattern_analysis.explain(seq, num, all_draws=all_seq)
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def chart_transfer_rates_for(fp):
+    return classic.chart_transfer_rates(load_draws())
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def lag_curves_for(fp):
+    from lottery_core import chart_analysis as ca
+    return ca.lag_curves(load_draws())
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def best_entry_report_for(fp):
+    from lottery_core import chart_analysis as ca
+    return ca.best_entry_report(load_draws())
+
+
+def cached_scores(game, mode, upto):
+    """scores_for with the right cache key assembled -- the artifact version only
+    matters for the modes that load a trained artifact."""
+    return scores_for(data_fp(), artifact_version(game) if mode in ML_MODES else '', game, mode, upto)
+
+
 def by_game_dict(draws):
     out = {}
     for d in draws:
@@ -186,6 +249,11 @@ quick_retrain = st.sidebar.checkbox("Quick retrain (fewer estimators/epochs, coa
 skip_bt_default = len(retrain_games) < len(config.GAMES)
 skip_backtest_retrain = st.sidebar.checkbox("Skip backtest (faster -- just refresh model artifacts)",
                                              value=skip_bt_default)
+deep_ok = training_control.deep_training_available()
+if not deep_ok:
+    st.sidebar.caption("PyTorch isn't installed here, so a retrain covers rf/gbm/mlp only. The deep "
+                        "model still *scores* normally from its saved weights -- that runs in NumPy. "
+                        "To refit it, install `requirements-train.txt` and run `python train.py`.")
 st.sidebar.caption("A full run over all 7 games (with backtest) takes ~5-8 min quick / ~15 min full. "
                     "Skipping the backtest or retraining fewer games is much faster.")
 train_status = training_control.status()
@@ -211,7 +279,7 @@ else:
         if not retrain_games:
             st.sidebar.error("Select at least one game.")
         elif training_control.start(quick=quick_retrain, games=retrain_games,
-                                     skip_backtest=skip_backtest_retrain):
+                                     skip_backtest=skip_backtest_retrain, skip_deep=not deep_ok):
             st.sidebar.success("Retrain started in the background.")
             st.rerun()
         else:
@@ -285,7 +353,7 @@ with tab_pattern:
     if len(seq) < 30:
         st.warning(f"Not enough history for {config.NAMES[game]} before {upto}.")
     else:
-        sc = get_scores_any(seq, mode, game, all_draws=all_seq)
+        sc = cached_scores(game, mode, upto)
         _picks_header(game, upto, sc, mode)
         st.caption("These picks are ranked by the selected strategy's score, not a probability of "
                    "winning. See the Methodology tab: no strategy has shown a real edge over random chance.")
@@ -333,7 +401,7 @@ with tab_pattern:
 
             def _render_explanation(num, exp=None, rank=None):
                 if exp is None:
-                    exp = pattern_analysis.explain(seq, num, all_draws=all_seq)
+                    exp = explain_for(data_fp(), game, upto, num)
                 contrib_sorted = sorted(exp['contribution'].items(),
                                         key=lambda kv: -kv[1]['contribution_pct'])
                 drivers = [(PLAIN_LABELS.get(n, n), v['contribution_pct'])
@@ -526,7 +594,7 @@ with tab_pattern:
 
             top5 = [n for n, _ in sorted(sc.items(), key=lambda t: (-t[1], t[0]))[:5]]
             with st.spinner("Tracing the evidence behind each pick..."):
-                exps = {n: pattern_analysis.explain(seq, n, all_draws=all_seq) for n in top5}
+                exps = {n: explain_for(data_fp(), game, upto, n) for n in top5}
 
             st.write(f"**Evidence map — what supports each of the 5 picks** "
                      f"(each cell: that evidence type's share of the pick's score):")
@@ -1119,7 +1187,7 @@ with tab_ml:
         st.warning(f"Not enough history for {config.NAMES[game_ml]} before {upto_ml}.")
     else:
         with st.spinner(f"Scoring with strategy '{mode_ml}'..."):
-            sc_ml = get_scores_any(seq_ml, mode_ml, game_ml)
+            sc_ml = cached_scores(game_ml, mode_ml, upto_ml)
         _picks_header(game_ml, upto_ml, sc_ml, mode_ml)
         st.caption("These picks are ranked by the selected strategy's score, not a probability of "
                    "winning. See the Methodology tab: no strategy has shown a real edge over random chance.")
@@ -1241,7 +1309,7 @@ with tab_charts:
     partner = classic.CHARTS[chart_name].get(number)
     st.metric(f"{chart_name} partner of {number}", partner if partner else "none")
 
-    rates = classic.chart_transfer_rates(draws)
+    rates = chart_transfer_rates_for(data_fp())
     rate_df = pd.DataFrame([{'chart': name, 'transfer_rate_%': rate * 100} for name, rate in rates.items()])
     rate_df = pd.concat([rate_df, pd.DataFrame([{'chart': 'random chance', 'transfer_rate_%': 100 / 18}])], ignore_index=True)
     fig = go.Figure(go.Bar(x=rate_df['chart'], y=rate_df['transfer_rate_%'],
@@ -1261,7 +1329,7 @@ with tab_charts:
         "partner come next draw, or 'within a few weeks'?), and the individually "
         "best-looking entries — with the selection-effect warning they require."
     )
-    curves = ca.lag_curves(draws)
+    curves = lag_curves_for(data_fp())
     fig_lag = go.Figure()
     for name, by_lag in curves.items():
         fig_lag.add_trace(go.Scatter(name=name, x=list(by_lag.keys()),
@@ -1272,7 +1340,7 @@ with tab_charts:
                           height=400, margin=dict(l=10, r=10, t=40, b=10))
     st.plotly_chart(fig_lag, width='stretch')
 
-    rep = ca.best_entry_report(draws)
+    rep = best_entry_report_for(data_fp())
     st.write(f"**Individually best-looking entries** ({rep['tested']} entries tested — with that many, "
              f"the best few are GUARANTEED to look impressive by selection alone):")
     st.dataframe(pd.DataFrame([

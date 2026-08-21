@@ -114,7 +114,20 @@ def build_sequences(history, window=WINDOW, min_hist=60):
     return np.stack(Xs), np.stack(ys)
 
 
+def torch_available():
+    """Training needs torch; scoring does not (see deep_runtime). A deployment built
+    from requirements.txt alone will not have it, and that is the intended setup --
+    callers use this to skip the deep model instead of crashing."""
+    import importlib.util
+    return importlib.util.find_spec('torch') is not None
+
+
 def train_deep(history, window=WINDOW, min_hist=60, max_epochs=40, quick=False, patience=5):
+    if not torch_available():
+        raise ImportError(
+            "Training the deep model needs PyTorch, which the runtime requirements "
+            "deliberately omit. Install it with: pip install -r requirements-train.txt"
+        )
     import torch
     import torch.nn as nn
     from torch.utils.data import DataLoader, TensorDataset
@@ -177,16 +190,20 @@ def train_deep(history, window=WINDOW, min_hist=60, max_epochs=40, quick=False, 
 
 
 def deep_scores(state_dict, meta, history, game_code=None):
-    import torch
+    """Score the next draw from a trained checkpoint, in NumPy.
+
+    Runs deep_runtime.forward rather than rebuilding the torch module, so the
+    deployed app never imports torch (see deep_runtime's docstring). Accepts either a
+    live torch state_dict (what backtest.py passes, straight off a just-trained model)
+    or the NumPy weights artifacts.load_deep_weights returns.
+    """
+    from . import deep_runtime
     if state_dict is None or not history:
         return {k: 0.0 for k in range(1, 91)}
+    weights = {k: (v.detach().cpu().numpy() if hasattr(v, 'detach') else np.asarray(v))
+               for k, v in state_dict.items()}
     window = meta.get('window', WINDOW)
-    model = LotterySeqModel(window=window, hidden=meta.get('hidden', HIDDEN))
-    model.load_state_dict(state_dict)
-    model.eval()
     recent = history[-window:]
-    reps = np.stack([_draw_repr(d) for d in recent])[None, :, :]
-    with torch.no_grad():
-        logits = model.net(torch.tensor(reps))
-        probs = torch.sigmoid(logits)[0].numpy()
+    reps = np.stack([_draw_repr(d) for d in recent])
+    probs = deep_runtime.forward(weights, reps)
     return {k + 1: float(p) for k, p in enumerate(probs)}

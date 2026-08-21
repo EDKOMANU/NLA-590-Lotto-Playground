@@ -1,0 +1,59 @@
+# Fly.io deployment for the Ghana NLA 5/90 Predictor.
+#
+# Why this platform: the app's problem was never how fast it *runs*, it was that a
+# sleeping Streamlit Community Cloud app rebuilds its Python environment on wake.
+# Fly wakes a machine from an image that is already on the host -- nothing is
+# reinstalled -- so a cold visit costs a container start, not a dependency install.
+#
+# Rename the app before the first deploy:
+#     fly launch --no-deploy --copy-config --name <your-app-name>
+#     fly volumes create lotto_data --size 1 --region jnb
+#     fly deploy
+
+app = "ghana-lotto-predictor"
+primary_region = "jnb"          # Johannesburg -- closest region to Ghana. `fly platform regions` lists the rest.
+
+[build]
+  dockerfile = "Dockerfile"
+  target = "runtime"            # the CPU/NumPy image; the `training` target is for train.py only
+
+[env]
+  PORT = "8501"
+  # Mutable state lives on the volume, so "Fetch latest draws" and a retrain survive
+  # a restart. Everything else (code, the baseline CSV, model weights) rides the image.
+  LOTTO_DATA_CSV = "/data/ghana_lotto_history.csv"
+  LOTTO_ARTIFACT_DIR = "/data/artifacts"
+  LOTTO_CACHE_DIR = "/data/backtest_cache"
+  HOME = "/data/.cache"         # Streamlit's persisted @st.cache_data lands here
+
+[http_service]
+  internal_port = 8501
+  force_https = true
+  auto_stop_machines = "suspend"   # suspend snapshots RAM: waking is ~a second, and
+                                   # the warm caches are still in memory. Fly falls
+                                   # back to a full stop where suspend isn't available;
+                                   # that wake is a few seconds, still no reinstall.
+  auto_start_machines = true
+
+  # Streamlit holds a websocket per session and keeps that session's state in the
+  # process, so a second machine would strand half the users' state. One machine,
+  # scaled up rather than out.
+  min_machines_running = 0       # set to 1 to never make a visitor wait for a wake
+  max_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/_stcore/health"
+
+[[mounts]]
+  source = "lotto_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"                # the app peaks well under this; 512mb is tight once
+                                # plotly and the backtest cache are both loaded

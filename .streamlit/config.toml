@@ -1,9 +1,16 @@
 [server]
 headless = true
-port = 8501
-enableCORS = false
+# No port/address here on purpose: the container's CMD passes --server.port=$PORT so
+# the same image runs on Fly (8501), Cloud Run (8080) or anywhere else that assigns one.
+# Watching the source tree costs a thread and some startup time and buys nothing in a
+# deployment; the Dockerfile turns it off via STREAMLIT_SERVER_FILE_WATCHER_TYPE, which
+# leaves local `streamlit run` auto-reloading as usual.
+
+# enableCORS was previously false while XSRF protection was on, which Streamlit warns
+# about on every boot: CORS-off does not actually loosen the websocket path, so the
+# pair just produced noise. Both on is the supported combination.
+enableCORS = true
 enableXsrfProtection = true
-address = "0.0.0.0"
 
 [browser]
 gatherUsageStats = false
