@@ -77,12 +77,24 @@ quarantine 'lap'/'positional' already live under. Deeper lags (2..10) are genuin
 recurrence claims and are scored normally.
 
 LOOK-ELSEWHERE (the project's other standing failure mode, see spatial_engine's key
-search): this engine evaluates |matchers| x |links| x |lags| ~= 800 candidate plans, so
-the best-looking plan is guaranteed to look impressive by selection alone. Every plan
-carries its exact binomial p-value against the 5.56% baseline, and
+search): this engine evaluates |matchers| x |links| x |lags| candidate plans -- 1,240 to
+1,860 per game in practice, depending on how many matchers find enough lookalike weeks
+to learn from -- so the best-looking plan is guaranteed to look impressive by selection
+alone. Every plan carries its exact binomial p-value against the 5.56% baseline, and
 bootstrap_best_plan_pvalue() runs the ENTIRE plan search against structure-destroyed
 synthetic histories and reports how often noise hands back a better best-plan -- the
 family-wise, max-statistic arbiter. Its verdict is displayed next to the chosen plan.
+That test now runs the FULL search by default; on a reduced one it was judging a plan
+the report never displayed, and reading ~5x more favourably for it (Monday Special:
+p = 0.10 reduced vs p = 0.65 full). 0.65 is the honest number, and it is the expected
+one -- see the module's own framing above, and REPORT.md.
+
+ONE VOTE PER MECHANISM: a plan's numbers for the coming week are link_candidates(link,
+lag) and nothing else -- the matcher decides what the plan was MEASURED against, never
+what it proposes now. So plans sharing a (link, lag) propose identical numbers, and
+letting each add its weight to the blend votes one reading several times. scoring_set()
+keeps the best-evidenced plan per mechanism and reports the rest as collapsed rather
+than dropping them quietly.
 """
 import math
 from collections import Counter, defaultdict
@@ -237,7 +249,16 @@ LINK_SPECS = {
     'terminal_family': _terminal_family,
     'root_family': _root_family,
 }
+# The traditional 'turning' chart is digit inversion, which _turning already implements
+# (verified identical for all 90 source numbers -- tools/check_plan_links.py). Registering
+# it twice made one mechanism compete as two plans: both qualified, both landed in the
+# scored blend, and both credited the same numbers, so a single reading counted double in
+# the final picks. One entry per mechanism.
+DUPLICATE_CHARTS = {'turning': 'turning'}   # chart name -> the LINK_SPECS entry it duplicates
+
 for _name in CHARTS:
+    if _name in DUPLICATE_CHARTS:
+        continue
     LINK_SPECS[f'chart_{_name}'] = _chart_link(_name)
 for _step in (9, -9, 10, -10, 11, -11):
     LINK_SPECS[f'grid{_step:+d}'] = _grid_offset(_step)
@@ -259,6 +280,8 @@ LINK_LABELS = {
     'root_family': "another number from the same digital-root family",
 }
 for _name in CHARTS:
+    if _name in DUPLICATE_CHARTS:
+        continue
     LINK_LABELS[f'chart_{_name}'] = f"its partner on the {_name.replace('_', ' ')} chart"
 _GRID_WORDS = {9: "diagonal neighbour on the chart grid (+9)", -9: "diagonal neighbour on the chart grid (−9)",
                10: "the cell directly below on the chart grid (+10)", -10: "the cell directly above on the chart grid (−10)",
@@ -488,6 +511,11 @@ def _evaluate_plan(history, situations, link, lag, cache=None):
     hits = proposals = 0
     evidence = []
     anchors = Counter()
+    # Per-situation yields as well as the pooled one. A situation is the unit of
+    # independent evidence here: within one, a link's candidates are all measured
+    # against the SAME five drawn numbers, so they are one observation, not |C| of them.
+    # See _summarize_yields for what the two estimators are each good for.
+    per_situation = []
     for i, sim, anchor in situations:
         cand = link_candidates(history, i, link, lag, cache)
         if not cand or len(cand) > CANDIDATE_CAP:
@@ -496,6 +524,7 @@ def _evaluate_plan(history, situations, link, lag, cache=None):
         explained = sorted(cand & dropped)
         hits += len(explained)
         proposals += len(cand)
+        per_situation.append(len(explained) / len(cand))
         if anchor:
             anchors[anchor] += 1
         if explained:
@@ -509,7 +538,36 @@ def _evaluate_plan(history, situations, link, lag, cache=None):
                 # WHICH of the current draw's numbers anchored this lookalike week.
                 'anchor': list(anchor),
             })
-    return hits, proposals, evidence, anchors
+    return hits, proposals, evidence, anchors, per_situation
+
+
+def _summarize_yields(hits, proposals, per_situation):
+    """Two views of the same evidence, both reported, only one used for ranking.
+
+    `rate`/`weight` pool every proposed candidate as a trial. That is what the module
+    has always ranked on, and its denominator mixes two unrelated things: how many
+    lookalike weeks the matcher found, and how many numbers the link proposes per week.
+    A link proposing forty numbers banks forty "trials" a week against a two-number
+    link's two, so it is shrunk far less at the same measured yield -- breadth buys rank
+    without buying accuracy.
+
+    `sit_rate`/`sit_weight` weight every matched situation equally and count the
+    situations, not the candidates, as the sample. That denominator is the number of
+    independent observations the plan actually has, so it compares a narrow plan and a
+    broad one on the same footing. Reported alongside so the gap between the two is
+    visible; changing which one RANKS plans changes every pick this mode makes, so that
+    stays a deliberate decision rather than a silent one.
+    """
+    rate = hits / proposals if proposals else 0.0
+    n_sit = len(per_situation)
+    sit_rate = sum(per_situation) / n_sit if n_sit else 0.0
+    return {
+        'rate': rate,
+        'weight': _wilson_lower_bound(rate, proposals),
+        'sit_rate': sit_rate,
+        'sit_weight': _wilson_lower_bound(sit_rate, n_sit),
+        'n_contributing': n_sit,
+    }
 
 
 def discover_plans(history, matchers=MATCHERS, depth=BACKTRACE_DEPTH, window=WINDOW):
@@ -531,21 +589,27 @@ def discover_plans(history, matchers=MATCHERS, depth=BACKTRACE_DEPTH, window=WIN
             continue
         for link in LINK_SPECS:
             for lag in range(1, depth + 1):
-                hits, proposals, evidence, anchors = _evaluate_plan(history, situations, link, lag, cache)
+                hits, proposals, evidence, anchors, per_sit = _evaluate_plan(
+                    history, situations, link, lag, cache)
                 if proposals <= 0:
                     continue
                 top_anchors = [{'numbers': list(a), 'weeks': c} for a, c in anchors.most_common(5)]
-                rate = hits / proposals
-                weight = _wilson_lower_bound(rate, proposals)
+                y = _summarize_yields(hits, proposals, per_sit)
+                rate, weight = y['rate'], y['weight']
                 echo = (link, lag) in ECHO_EXCLUDED
+                # Gate on the situations that actually CONTRIBUTED, not on how many the
+                # matcher returned: a situation whose source week yields no candidates
+                # (or more than CANDIDATE_CAP) is skipped above and is not evidence.
                 qualifies = (not echo and proposals >= MIN_PROPOSALS
-                             and len(situations) >= MIN_SITUATIONS)
+                             and y['n_contributing'] >= MIN_SITUATIONS)
                 plans.append({
                     'id': f"{matcher}|{link}|lag{lag}",
                     'matcher': matcher, 'link': link, 'lag': lag,
                     'situations': len(situations),
+                    'n_contributing': y['n_contributing'],
                     'hits': hits, 'proposals': proposals,
                     'rate': rate, 'chance': CHANCE, 'weight': weight,
+                    'sit_rate': y['sit_rate'], 'sit_weight': y['sit_weight'],
                     'lift': (rate / CHANCE) if CHANCE else 0.0,
                     'p_value': _binom_tail_p(hits, proposals, CHANCE),
                     'echo_excluded': echo, 'qualifies': qualifies,
@@ -692,17 +756,53 @@ def plan_comparison(primary, secondaries):
 
 
 # ---------------------------------------------------------------- scoring & report
+def scoring_set(plans, limit=TOP_PLANS_SCORED):
+    """The plans that get a vote in the blend: the best-evidenced `limit` of them, ONE
+    PER MECHANISM. Returns (chosen, collapsed).
+
+    A plan's numbers for the coming week come from link_candidates(history, n, link,
+    lag) -- (link, lag) and nothing else. The matcher decides which past weeks the plan
+    was MEASURED on, never what it proposes now. So every plan sharing a (link, lag)
+    proposes exactly the same numbers, and letting each of them add its weight votes one
+    mechanism several times: on Friday Bonanza the twelve scoring plans were only eight
+    mechanisms, with `plus1` at lag 8 voting three times for one set of numbers because
+    it happened to qualify under three matchers.
+
+    The extra rows are not extra evidence, they are the same reading measured against
+    three different reference classes. The best-evidenced one keeps the vote; the rest
+    are returned in `collapsed` so the report can show them rather than lose them.
+    """
+    chosen, kept_by_mech, collapsed = [], {}, []
+    for p in plans:
+        if not p['qualifies']:
+            continue
+        mech = (p['link'], p['lag'])
+        if mech in kept_by_mech:
+            collapsed.append({'dropped': p['id'], 'kept': kept_by_mech[mech],
+                              'mechanism': f"{p['link']}|lag{p['lag']}",
+                              'matcher': p['matcher'], 'rate': p['rate'],
+                              'weight': p['weight']})
+            continue
+        kept_by_mech[mech] = p['id']
+        chosen.append(p)
+        if len(chosen) >= limit:
+            break
+    return chosen, collapsed
+
+
 def plan_scores(history, plans=None):
     """Blended score from the learned plans: each qualifying plan credits the numbers it
-    proposes for the coming week, weighted by its own Wilson-shrunk measured yield.
+    proposes for the coming week, weighted by its own Wilson-shrunk measured yield --
+    one vote per mechanism, see scoring_set().
     Returns (scores, report)."""
     plans = plans if plans is not None else discover_plans(history)
     scores = {k: 0.0 for k in range(1, 91)}
-    scored = [p for p in plans if p['qualifies']][:TOP_PLANS_SCORED]
+    scored, collapsed = scoring_set(plans)
     for p in scored:
         for x in p['now']:
             scores[x] += p['weight']
     report = plan_report(history, plans, scored)
+    report['collapsed_duplicates'] = collapsed
     # No untraceable picks: attach the derivation of every number the blend puts on top.
     top = [k for k, _ in sorted(scores.items(), key=lambda t: (-t[1], t[0]))[:10] if scores[k] > 0]
     report['derivations'] = number_derivations(history, top, plans)
@@ -715,7 +815,7 @@ def plan_report(history, plans, scored=None):
     `best` is the chosen plan (highest Wilson-shrunk yield among qualifying plans);
     `others` keeps every runner-up with its own numbers and track record; `echoes` keeps
     the quarantined lag-1 carry plans so their exclusion is visible rather than silent."""
-    scored = scored if scored is not None else [p for p in plans if p['qualifies']][:TOP_PLANS_SCORED]
+    scored = scored if scored is not None else scoring_set(plans)[0]
     qualifying = [p for p in plans if p['qualifies']]
     echoes = [p for p in plans if p['echo_excluded']]
     best = qualifying[0] if qualifying else None
@@ -737,6 +837,7 @@ def plan_report(history, plans, scored=None):
         'comparison': plan_comparison(best, secondaries),
         'echoes': echoes[:6],
         'n_plans_evaluated': len(plans),
+        'collapsed_duplicates': [],
         'n_qualifying': len(qualifying),
         'matchers_used': sorted({p['matcher'] for p in qualifying}),
         'best_structural': best_structural,
@@ -747,6 +848,14 @@ def plan_report(history, plans, scored=None):
         # on most games: sharing 3+ numbers with the current draw is genuinely rare).
         # Disclosed rather than silently dropped.
         'matchers_skipped': [m for m in MATCHERS if m not in {p['matcher'] for p in plans}],
+        # How many lookalike weeks each matcher found. This is not trivia: `weight` is a
+        # Wilson LOWER bound, so a matcher that kept 250 situations is shrunk far less
+        # than one that kept 30 at the same measured yield, and the ranking partly
+        # reflects that rather than performance. Reported so the comparison rows above
+        # ('does the anchor matter?', 'does structure matter?') can be read with the
+        # sample sizes visible instead of as a like-for-like contest.
+        'matcher_situations': {m: n for m, n in sorted(
+            {p['matcher']: p['situations'] for p in plans}.items())},
     }
 
 
@@ -770,7 +879,8 @@ def explain_number(history, number, plans=None):
 
 
 # ---------------------------------------------------------------- noise control
-def bootstrap_best_plan_pvalue(history, iterations=40, seed=0, depth=4, matchers=('image', 'any')):
+def bootstrap_best_plan_pvalue(history, iterations=40, seed=0, depth=BACKTRACE_DEPTH,
+                                matchers=MATCHERS):
     """Family-wise (max-statistic) test, the same arbiter spatial_engine applies to its
     key search: re-run the WHOLE plan search on structure-destroyed synthetic histories
     (same shape, same density, numbers redrawn uniformly) and report how often noise
@@ -778,9 +888,17 @@ def bootstrap_best_plan_pvalue(history, iterations=40, seed=0, depth=4, matchers
 
     A p-value above 0.05 means the winning plan is indistinguishable from what pure
     chance hands a search of this size -- i.e. the plan is apophenia, however convincing
-    its story reads. Runs on a reduced search (depth/matchers) purely for cost; the
-    reduction is disclosed in the returned dict so the comparison stays like-for-like
-    (the real best plan is recomputed under the SAME reduced search)."""
+    its story reads.
+
+    The search tested defaults to the FULL one, so the plan being judged is the plan the
+    report displays. It used to default to matchers=('image','any'), depth=4 for cost:
+    internally consistent (the real best was recomputed under the same reduction) but it
+    left the verdict attached to a plan the reduced search had never considered -- on
+    Monday Special the report's best plan was structure|carry|lag6 while the test was
+    judging image|mach_carry|lag3, a different matcher family at a lag outside the tested
+    depth. The full search costs ~0.7s per synthetic history, so 40 iterations is ~30s;
+    a caller that needs it cheaper can still pass a reduction, and `search` in the result
+    records what was actually tested along with whether it matched the full search."""
     import random
     rng = random.Random(seed)
     real = discover_plans(history, matchers=matchers, depth=depth)
@@ -806,11 +924,16 @@ def bootstrap_best_plan_pvalue(history, iterations=40, seed=0, depth=4, matchers
         verdict = ('the best plan beats what this size of search finds in pure noise, across '
                    'every synthetic chart tried — worth re-testing at higher iterations before '
                    'believing it')
+    full_search = set(matchers) == set(MATCHERS) and depth == BACKTRACE_DEPTH
     return {
         'real_best_weight': real_best,
         'real_best_plan': real_q[0]['id'] if real_q else None,
         'bootstrap_p': p, 'iterations': iterations, 'n_noise_wins': ge,
         'resolution': resolution,
-        'search': {'matchers': list(matchers), 'depth': depth},
+        'search': {'matchers': list(matchers), 'depth': depth, 'is_full_search': full_search},
+        # True when the plan judged here is the same one plan_report() calls `best`.
+        # A reduced search can pick a different winner, and then the verdict below is
+        # about that other plan, not the one on screen.
+        'judged_the_displayed_plan': full_search,
         'verdict': verdict,
     }
