@@ -1016,6 +1016,37 @@ with tab_pattern:
                         f"they were BUILT (spacing, spread, clustering, draw order): {bs['rate']:.1%}. "
                         f"Best plan matching by the numbers themselves: {bf['rate']:.1%}. {lead}")
 
+                # The two comparisons above are not like-for-like unless the sample sizes
+                # are visible: `weight` is a Wilson LOWER bound, so a matcher that found
+                # 250 lookalike weeks is shrunk far less than one that found 30 at the
+                # same measured rate. Say so rather than letting the rows read as a fair
+                # contest.
+                msit = prep.get('matcher_situations') or {}
+                if msit and len(set(msit.values())) > 1:
+                    st.caption(
+                        "**Read those two comparisons with the sample sizes in mind.** The ways of "
+                        "finding lookalike weeks did not find the same number of them — "
+                        + ", ".join(f"`{m}`: {n}" for m, n in sorted(msit.items(), key=lambda t: -t[1]))
+                        + ". A way of matching that found more weeks is measured more confidently, "
+                        "which pushes it up the ranking on its own. The percentages above are the "
+                        "raw measured rates, which is the fair comparison; the ranking is not.")
+
+                collapsed = prep.get('collapsed_duplicates') or []
+                if collapsed:
+                    with st.expander(f"{len(collapsed)} plan(s) left out of the final blend as repeats"):
+                        st.caption(
+                            "What a plan proposes for this week depends only on the mechanism and how "
+                            "far back it reads — never on how the lookalike weeks were found. So when "
+                            "the same mechanism qualifies under several ways of matching, those rows "
+                            "are the same reading measured against different reference classes, not "
+                            "separate evidence. Each mechanism gets one vote; the rest are listed here "
+                            "rather than dropped quietly.")
+                        st.dataframe(pd.DataFrame([
+                            {'left out': c['dropped'], 'kept instead': c['kept'],
+                             'same mechanism': c['mechanism'],
+                             'its measured rate': f"{c['rate']:.1%}"} for c in collapsed]),
+                            width='stretch', hide_index=True)
+
                 if prep.get('matchers_skipped'):
                     st.caption("Not enough history to learn from: "
                                + ", ".join(f"`{m}`" for m in prep['matchers_skipped'])
@@ -1077,11 +1108,19 @@ with tab_pattern:
                     f"if the results were completely made up?** The button below checks exactly that."
                 )
                 if st.button("Run the noise test on the whole plan search", key="plans_bootstrap"):
-                    with st.spinner("Re-learning plans from scratch on shuffled fake histories…"):
+                    # Runs the FULL search on every synthetic history, so the plan being
+                    # judged is the plan shown above. It used to run a cut-down search
+                    # for speed, which meant the verdict could belong to a plan this page
+                    # never displayed. ~30s for 40 iterations, hence the spinner.
+                    with st.spinner("Re-learning plans from scratch on shuffled fake histories… "
+                                    "(this runs the whole search 40 times over, give it ~30s)"):
                         bres = pl.bootstrap_best_plan_pvalue(seq, iterations=40)
                     st.write(f"Fake random histories that produced an **even better** best plan: "
                              f"**{bres['n_noise_wins']} of {bres['iterations']}** "
                              f"({bres['bootstrap_p']:.0%}).")
+                    if not bres.get('judged_the_displayed_plan', True):
+                        st.info(f"Note: this test searched a reduced set of plans, so it judged "
+                                f"`{bres['real_best_plan']}` rather than the plan shown above.")
                     if bres['bootstrap_p'] > 0.05:
                         st.error(f"Verdict: {bres['verdict']}")
                     else:
