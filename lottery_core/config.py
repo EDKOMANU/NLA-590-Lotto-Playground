@@ -1,9 +1,14 @@
 import os
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CSVF = os.path.join(BASE, 'ghana_lotto_history.csv')
-ARTIFACT_DIR = os.path.join(BASE, 'artifacts')
-CACHE_DIR = os.path.join(BASE, 'backtest_cache')
+
+# Overridable so a container can point the mutable state (the draw archive that
+# "Fetch latest draws" appends to, and the model/backtest artifacts a retrain writes)
+# at a mounted volume instead of the image's own filesystem, which is thrown away on
+# every restart. Unset, everything stays where it has always been, next to the code.
+CSVF = os.environ.get('LOTTO_DATA_CSV') or os.path.join(BASE, 'ghana_lotto_history.csv')
+ARTIFACT_DIR = os.environ.get('LOTTO_ARTIFACT_DIR') or os.path.join(BASE, 'artifacts')
+CACHE_DIR = os.environ.get('LOTTO_CACHE_DIR') or os.path.join(BASE, 'backtest_cache')
 
 GAMES = ['MS', 'LT', 'MW', 'FT', 'FB', 'NW', 'SA']
 NAMES = {'MS': 'Monday Special', 'LT': 'Lucky Tuesday', 'MW': 'MidWeek', 'FT': 'Fortune Thursday',

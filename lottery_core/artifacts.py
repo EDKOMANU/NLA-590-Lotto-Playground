@@ -33,6 +33,17 @@ def game_data_fingerprint(game_code):
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
+def data_content_fingerprint():
+    """Hash of the CSV's *contents*. Unlike data_fingerprint (which mixes in mtime), a
+    fresh clone or a redeploy of unchanged data produces the same value -- which is what
+    makes it safe to use as a cache key for results that survive a restart."""
+    h = hashlib.sha256()
+    with open(CSVF, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()[:16]
+
+
 def data_latest_date():
     import csv
     with open(CSVF) as f:
@@ -67,24 +78,60 @@ def load_sklearn_meta(name):
         return json.load(f)
 
 
-# ---------------------------------------------------------------- torch model
+# ---------------------------------------------------------------- deep model
+# Written twice: the .pt checkpoint (torch's own format, for anyone resuming training)
+# and a plain .npz of the same weights, which is what the *app* loads. The app runs
+# the LSTM forward pass in NumPy (lottery_core/deep_runtime.py), so a deployment only
+# needs torch if it is going to train -- see requirements-train.txt. That keeps the
+# served image off the ~2.5 GB of CUDA wheels the Linux torch build pulls in.
+def _to_numpy(state_dict):
+    """Accepts a torch state_dict or an already-NumPy mapping and returns NumPy arrays."""
+    import numpy as np
+    out = {}
+    for k, v in state_dict.items():
+        if hasattr(v, 'detach'):
+            v = v.detach().cpu().numpy()
+        out[k] = np.asarray(v, dtype=np.float32)
+    return out
+
+
 def save_torch_model(name, state_dict, meta):
+    import numpy as np
     import torch
     torch.save(state_dict, os.path.join(ARTIFACT_DIR, f'{name}.pt'))
+    np.savez(os.path.join(ARTIFACT_DIR, f'{name}.npz'), **_to_numpy(state_dict))
     with open(os.path.join(ARTIFACT_DIR, f'{name}_meta.json'), 'w') as f:
         json.dump(meta, f, indent=2)
 
 
-def load_torch_model(name):
-    import torch
-    pt_path = os.path.join(ARTIFACT_DIR, f'{name}.pt')
+def load_deep_weights(name):
+    """(weights_as_numpy, meta) for a trained per-game LSTM, or (None, None).
+
+    Prefers the .npz so no torch import is needed. Falls back to the .pt checkpoint
+    only when the .npz is missing (an artifact directory trained before the NumPy
+    runtime landed) -- that path does need torch; run tools/convert_deep_artifacts.py
+    once to regenerate the .npz files and the fallback stops being used.
+    """
+    import numpy as np
     meta_path = os.path.join(ARTIFACT_DIR, f'{name}_meta.json')
-    if not (os.path.exists(pt_path) and os.path.exists(meta_path)):
+    if not os.path.exists(meta_path):
         return None, None
-    state_dict = torch.load(pt_path, map_location='cpu', weights_only=True)
     with open(meta_path) as f:
         meta = json.load(f)
-    return state_dict, meta
+    npz_path = os.path.join(ARTIFACT_DIR, f'{name}.npz')
+    if os.path.exists(npz_path):
+        with np.load(npz_path) as z:
+            return {k: z[k] for k in z.files}, meta
+    pt_path = os.path.join(ARTIFACT_DIR, f'{name}.pt')
+    if not os.path.exists(pt_path):
+        return None, None
+    import torch
+    return _to_numpy(torch.load(pt_path, map_location='cpu', weights_only=True)), meta
+
+
+def load_torch_model(name):
+    """Back-compat alias -- returns NumPy weights, which deep_model.deep_scores takes."""
+    return load_deep_weights(name)
 
 
 # ---------------------------------------------------------------- backtest cache

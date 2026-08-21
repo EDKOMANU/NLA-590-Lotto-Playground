@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Streamlit's persisted @st.cache_data store -- machine-local, rebuilt on demand
+.streamlit/cache/
+.cache/
+
+*.log

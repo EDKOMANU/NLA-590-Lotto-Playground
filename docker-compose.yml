@@ -1,19 +1,22 @@
-version: '3.8'
-
 services:
   ghana-lotto-predictor:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     container_name: ghana-lotto-app
     ports:
       - "8501:8501"
     environment:
-      - PYTHONUNBUFFERED=1
+      PYTHONUNBUFFERED: "1"
+      # Point the mutable state at the mounted volume so a data refresh or a retrain
+      # survives `docker compose down`.
+      LOTTO_DATA_CSV: /data/ghana_lotto_history.csv
+      LOTTO_ARTIFACT_DIR: /data/artifacts
+      LOTTO_CACHE_DIR: /data/backtest_cache
+      HOME: /data/.cache
     volumes:
-      - ./ghana_lotto_history.csv:/app/ghana_lotto_history.csv
-      - ./artifacts:/app/artifacts
-      - ./backtest_cache:/app/backtest_cache
+      - lotto_data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
@@ -21,3 +24,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+volumes:
+  lotto_data:

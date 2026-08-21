@@ -66,10 +66,11 @@ def train_and_save_deep(by_game, games, fp, quick):
               f"{meta['epochs_run']} epochs) -> artifacts/{artifact_name}.pt")
 
 
-def run_backtest_and_save(draws, fp, quick):
+def run_backtest_and_save(draws, fp, quick, skip_deep=False):
     t0 = time.time()
     retrain_every = 150 if quick else 75
-    modes = config.UNTRAINED_MODES + ('rf', 'gbm', 'mlp', 'deep', 'ensemble')
+    trained = ('rf', 'gbm', 'mlp', 'ensemble') if skip_deep else ('rf', 'gbm', 'mlp', 'deep', 'ensemble')
+    modes = config.UNTRAINED_MODES + trained
     report = bt.backtest(draws, modes=modes, retrain_every=retrain_every, quick=quick,
                           progress=lambda m: print(f"  -- backtesting {m} --"))
     artifacts.save_backtest_cache(report, fp)
@@ -96,6 +97,14 @@ def main():
     ap.add_argument('--skip-backtest', action='store_true')
     args = ap.parse_args()
 
+    # Scoring the deep model is pure NumPy, but *fitting* it needs torch, which
+    # requirements.txt leaves out so deployments stay small. Degrade to the sklearn
+    # models rather than failing the run.
+    skip_deep = args.skip_deep or not deep_model.torch_available()
+    if skip_deep and not args.skip_deep:
+        print("PyTorch not installed -- skipping the deep LSTM (rf/gbm/mlp still train). "
+              "Install it with `pip install -r requirements-train.txt` to include it.")
+
     started_at = dt.datetime.now().isoformat()
     artifacts.save_training_status({'status': 'running', 'stage': 'starting',
                                      'started_at': started_at, 'quick': args.quick, 'games': args.games})
@@ -111,7 +120,7 @@ def main():
             _status('sklearn', quick=args.quick)
             train_and_save_sklearn(by_game, args.games, fp, args.quick)
 
-        if not args.skip_deep:
+        if not skip_deep:
             print("Training deep LSTM model per game...")
             _status('deep', quick=args.quick)
             train_and_save_deep(by_game, args.games, fp, args.quick)
@@ -119,7 +128,7 @@ def main():
         if not args.skip_backtest:
             print("Running full walk-forward backtest (this is the slow part)...")
             _status('backtest', quick=args.quick)
-            run_backtest_and_save(draws, fp, args.quick)
+            run_backtest_and_save(draws, fp, args.quick, skip_deep=skip_deep)
 
         print("train.py done.")
         artifacts.save_training_status({'status': 'done', 'stage': 'done', 'started_at': started_at,

@@ -168,8 +168,12 @@ def _train_game_model(mode, game_code, hist_g, min_hist, quick):
         sub = {}
         for name in ('rf', 'gbm', 'mlp'):
             sub[name] = sklearn_models.train_sklearn(name, game_code, hist_g, step=2, min_hist=min_hist, quick=quick)
-        dmodel, dmeta = deep_model.train_deep(hist_g, min_hist=min_hist, quick=quick)
-        sub['deep'] = (dmodel, dmeta)
+        # No torch installed (the default for a served deployment) -- backtest the
+        # ensemble without its deep component rather than failing the whole run.
+        if deep_model.torch_available():
+            sub['deep'] = deep_model.train_deep(hist_g, min_hist=min_hist, quick=quick)
+        else:
+            sub['deep'] = (None, None)
         return sub
     raise ValueError(f'unknown trained mode: {mode}')
 
